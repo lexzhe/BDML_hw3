@@ -3,12 +3,14 @@ package example
 import org.apache.spark.ml.bigdata.LinearRegression
 import org.apache.spark.ml.feature.{OneHotEncoder, StandardScaler, StringIndexer, VectorAssembler}
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
+import org.apache.spark.sql
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.expressions.UserDefinedFunction
-import org.apache.spark.sql.functions.{col, udf}
+import org.apache.spark.sql.functions.{col, max, min, udf}
 import org.apache.spark.sql.types.{DoubleType, IntegerType, StringType, StructType}
 
 import scala.collection.mutable
+import scala.math
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -84,13 +86,22 @@ object Main {
       .setWithStd(true)
       .setWithMean(true)
 
-    df = scaler.fit(df).transform(df).select("features", "label")
+    val minLabel = df.select(sql.functions.min("label")).first().getDouble(0)
+    val maxLabel = df.select(sql.functions.max("label")).first().getDouble(0)
+
+    val normalize: UserDefinedFunction = udf { x: Double =>
+      (x - minLabel)/(maxLabel - minLabel)
+    }
+
+    df = scaler.fit(df).transform(df)
+      .select(col("features"), normalize(col("label")).alias("label"))
+//    df = labelScaler.fit(df).transform(df)
+
 
     df.show(false)
     df.printSchema()
 
     val Array(train, test) = df.randomSplit(Array[Double](0.9, 0.1), 18)
-
 
     val regressor = new LinearRegression("testing7")
     val model = regressor.train(train)
@@ -103,14 +114,17 @@ object Main {
     val predicted_labels = output.select("prediction").collect().map(_.getDouble(0))
     val actual_labels = test.select("label").collect().map(_.getDouble(0))
 
-    println(train.first())
-    println(test.first())
-    println(model.weights)
-    println(model.predict(test.first().getAs[Vector]("features")))
+//    println(train.first())
+//    println(test.first())
+    println("coefficients: " + model.weights)
+    println("First prediction: " + model.predict(test.first().getAs[Vector]("features")))
 //    println("kek1")
+    var total = 0.0
     for (i <- predicted_labels.indices) {
-      println(predicted_labels.apply(i) - actual_labels.apply(i))
+      total += math.abs(predicted_labels.apply(i) - actual_labels.apply(i))
+      println(math.abs(predicted_labels.apply(i) - actual_labels.apply(i)))
     }
+    println("total error:" + total / predicted_labels.length)
 //    println("kek2")
   }
 }
